@@ -1,5 +1,5 @@
 - Start Date: 2025-04-21
-- RFC PR: https://github.com/datahub-project/rfcs/pull/11
+- RFC PR: [#11](https://github.com/datahub-project/rfcs/pull/11)
 - Discussion Issue: (GitHub issue this was discussed in before the RFC, if any)
 - Implementation PR(s): (leave this empty)
 
@@ -26,7 +26,8 @@ It is proposed to introduce two new Spark configurations: `spark.datahub.streami
     return SparkStreamingEventToDatahub.generateUrnFromStreamingDescription(
             description, sparkLineageConf, false);
 }
-
+```
+```java
 public static Optional<DatasetUrn> generateUrnFromStreamingDescription(
   String description, SparkLineageConf sparkLineageConf, boolean isSink) {
     String pattern = "(.*?)\\[(.*)]";
@@ -73,5 +74,18 @@ public static Optional<DatasetUrn> generateUrnFromStreamingDescription(
         return Optional.empty();
       }
     }
+}
+```
+```java
+public static Optional<DatasetUrn> generateUrnFromStreamingDescription(
+        String description, SparkLineageConf sparkLineageConf, String streamingPlatform) {
+    String platform = getDatahubPlatform(streamingPlatform);
+    log.debug("Streaming description Platform: {}, Path: {}, FabricType: {}",
+            platform, description, sparkLineageConf.getOpenLineageConf().getFabricType());
+    return Optional.of(
+            new DatasetUrn(
+                    new DataPlatformUrn(platform),
+                    description,
+                    sparkLineageConf.getOpenLineageConf().getFabricType()));
 }
 ```
