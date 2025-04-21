@@ -21,6 +21,12 @@ The motivation for this RFC stems from an issue encountered while capturing data
 
 It is proposed to introduce two new Spark configurations: `spark.datahub.streaming.source.platform` for specifying the streaming source platform, and `spark.datahub.streaming.sink.platform` for the streaming sink. Within the `generateUrnFromStreamingDescription` method in `SparkStreamingEventToDatahub.java`, these configurations will serve as fallbacks in cases where the regular expression matcher fails to extract the platform. If the configurations are set, their values will be used to determine the data platform. An example implementation is shown below:
 ```java
+  public static Optional<DatasetUrn> generateUrnFromStreamingDescription(
+        String description, SparkLineageConf sparkLineageConf) {
+    return SparkStreamingEventToDatahub.generateUrnFromStreamingDescription(
+            description, sparkLineageConf, false);
+}
+
 public static Optional<DatasetUrn> generateUrnFromStreamingDescription(
   String description, SparkLineageConf sparkLineageConf, boolean isSink) {
     String pattern = "(.*?)\\[(.*)]";
