@@ -19,7 +19,7 @@ The motivation for this RFC stems from an issue encountered while capturing data
 
 ## Detailed design
 
-It is proposed to introduce two new Spark configurations: `spark.datahub.streaming.source.platform` for specifying the streaming source platform, and `spark.datahub.streaming.sink.platform` for the streaming sink. Within the `generateUrnFromStreamingDescription` method in `SparkStreamingEventToDatahub.java`, these configurations will serve as fallbacks in cases where the regular expression matcher fails to extract the platform. If the configurations are set, their values will be used to determine the data platform. An example implementation is shown below:
+It is proposed to introduce two new Spark configurations: `spark.datahub.streaming_platform` for specifying the streaming platform, and streaming spec which is defined in the *Configuring Iceberg based dataset URNs* section below. Within the `generateUrnFromStreamingDescription` method in `SparkStreamingEventToDatahub.java`, these configurations will serve as fallbacks in cases where the regular expression matcher fails to extract the platform. If the configurations are set, their values will be used to determine the data platform. An example implementation is shown below:
 ```java
   public static Optional<DatasetUrn> generateUrnFromStreamingDescription(
         String description, SparkLineageConf sparkLineageConf) {
@@ -28,64 +28,92 @@ It is proposed to introduce two new Spark configurations: `spark.datahub.streami
 }
 ```
 ```java
-public static Optional<DatasetUrn> generateUrnFromStreamingDescription(
-  String description, SparkLineageConf sparkLineageConf, boolean isSink) {
+  public static Optional<DatasetUrn> generateUrnFromStreamingDescription(String description,
+                                                                         SparkLineageConf sparkLineageConf, boolean isSink) {
     String pattern = "(.*?)\\[(.*)]";
     Pattern r = Pattern.compile(pattern);
     Matcher m = r.matcher(description);
     if (m.find()) {
-      String namespace = m.group(1);
-      String platform = getDatahubPlatform(namespace);
-      String path = m.group(2);
-      log.debug("Streaming description Platform: {}, Path: {}", platform, path);
-      if (platform.equals(KAFKA_PLATFORM)) {
-        path = getKafkaTopicFromPath(m.group(2));
-      } else if (platform.equals(FILE_PLATFORM) || platform.equals(DELTA_LAKE_PLATFORM)) {
-        try {
-          DatasetUrn urn =
-                  HdfsPathDataset.create(new URI(path), sparkLineageConf.getOpenLineageConf()).urn();
-          return Optional.of(urn);
-        } catch (InstantiationException e) {
-          return Optional.empty();
-        } catch (URISyntaxException e) {
-          log.error("Failed to parse path {}", path, e);
-          return Optional.empty();
+        String namespace = m.group(1);
+        String platform = getDatahubPlatform(namespace);
+        String path = m.group(2);
+        log.debug("Streaming description Platform: {}, Path: {}", platform, path);
+        if (platform.equals(KAFKA_PLATFORM)) {
+            path = getKafkaTopicFromPath(m.group(2));
+        } else if (platform.equals(FILE_PLATFORM) || platform.equals(DELTA_LAKE_PLATFORM)) {
+            try {
+                DatasetUrn urn = HdfsPathDataset.create(new URI(path), sparkLineageConf.getOpenLineageConf()).urn();
+                return Optional.of(urn);
+            } catch (InstantiationException e) {
+                return Optional.empty();
+            } catch (URISyntaxException e) {
+                log.error("Failed to parse path {}", path, e);
+                return Optional.empty();
+            }
         }
-      }
-      return Optional.of(
-              new DatasetUrn(
-                      new DataPlatformUrn(platform),
-                      path,
-                      sparkLineageConf.getOpenLineageConf().getFabricType()));
+        return Optional.of(
+                new DatasetUrn(new DataPlatformUrn(platform), path, sparkLineageConf.getOpenLineageConf().getFabricType()));
     } else {
-      if (sparkLineageConf.getOpenLineageConf().getStreamingSinkPlatform() != null && isSink) {
-        return generateUrnFromStreamingDescription(
-          description,
-          sparkLineageConf,
-          sparkLineageConf.getOpenLineageConf().getStreamingSinkPlatform()
-        );
-      } else if (sparkLineageConf.getOpenLineageConf().getStreamingSourcePlatform() != null && !isSink) {
-        return generateUrnFromStreamingDescription(
-          description,
-          sparkLineageConf,
-          sparkLineageConf.getOpenLineageConf().getStreamingSourcePlatform()
-        );
-      } else {
-        return Optional.empty();
-      }
+        if (sparkLineageConf.getOpenLineageConf().getStreamingPlatform() != null) {
+            try {
+                CatalogTableDataset catalogTableDataset =
+                        CatalogTableDataset.create(sparkLineageConf.getOpenLineageConf().getStreamingPlatform(), description,
+                                sparkLineageConf.getOpenLineageConf(), isSink ? "sink" : "source");
+                if (catalogTableDataset == null) {
+                    return Optional.empty();
+                } else {
+                    DatasetUrn urn = catalogTableDataset.urn();
+                    return Optional.of(urn);
+                }
+            } catch (InstantiationException e) {
+                return Optional.empty();
+            }
+        } else {
+            return Optional.empty();
+        }
     }
 }
 ```
-```java
-public static Optional<DatasetUrn> generateUrnFromStreamingDescription(
-        String description, SparkLineageConf sparkLineageConf, String streamingPlatform) {
-    String platform = getDatahubPlatform(streamingPlatform);
-    log.debug("Streaming description Platform: {}, Path: {}, FabricType: {}",
-            platform, description, sparkLineageConf.getOpenLineageConf().getFabricType());
-    return Optional.of(
-            new DatasetUrn(
-                    new DataPlatformUrn(platform),
-                    description,
-                    sparkLineageConf.getOpenLineageConf().getFabricType()));
-}
+### Configuring Iceberg based dataset URNs
+
+This section follows the approach described in [Configuring Hdfs based dataset URNs](https://datahubproject.io/docs/metadata-integration/java/acryl-spark-lineage/#configuring-hdfs-based-dataset-urns)
+
+Spark emits lineage between datasets. It has its own logic for generating urns. Python sources emit metadata of
+datasets. To link these 2 things, urns generated by both have to match.
+This section will help you to match urns to that of other ingestion sources.
+By default, URNs are created using
+template `urn:li:dataset:(urn:li:dataPlatform:<$platform>,<$platformInstance>.<$name>,<$env>)`. We can configure these 4
+things to generate the desired urn.
+
+**Platform**:
+The platform is explicitly supported through the new Spark configuration key:
+
+- `spark.datahub.streaming_platform`
+
+Platforms that do not set this configuration will default to `null`.
+
+**Name**:
+By default, the name is the complete path.
+
+**platform instance and env:**
+
+The default value for env is 'PROD' and the platform instance is None. env and platform instances can be set for all
+datasets using configurations `spark.datahub.streaming.platform.<$platform>.<streaming_alias>.platformInstance` and `spark.datahub.streaming.platform.<$platform>.<streaming_alias>.env`.
+If spark is processing data that belongs to a different env or platform instance, then 'streaming_alias' can be used to
+specify `streaming_spec` specific values of these. 'streaming_alias' groups the env and platform instance
+together.
+
+streaming_alias_list Example:
+
+The below example explains the configuration of the case, where data from 2 Iceberg tables are being processed in a single
+spark application and data from my_table_1 are supposed to have "instance1" as platform instance and "PROD" as env, and
+data from my_table_2 should have env "DEV" in their dataset URNs.
+
+```
+spark.datahub.streaming.platform.iceberg.stream1.env : PROD
+spark.datahub.streaming.platform.iceberg.stream1.streaming_io_platform_type : source
+spark.datahub.streaming.platform.iceberg.stream1.platform_instance : instance1
+spark.datahub.streaming.platform.iceberg.stream2.env : DEV
+spark.datahub.streaming.platform.iceberg.stream1.streaming_io_platform_type : sink
+spark.datahub.streaming.platform.iceberg.stream2.platform_instance : instance2
 ```
