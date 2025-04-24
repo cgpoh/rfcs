@@ -112,8 +112,8 @@ data from my_table_2 should have env "DEV" in their dataset URNs.
 ```
 spark.datahub.streaming.platform.iceberg.stream1.env : PROD
 spark.datahub.streaming.platform.iceberg.stream1.streaming_io_platform_type : source
-spark.datahub.streaming.platform.iceberg.stream1.platform_instance : instance1
+spark.datahub.streaming.platform.iceberg.stream1.platformInstance : instance1
 spark.datahub.streaming.platform.iceberg.stream2.env : DEV
 spark.datahub.streaming.platform.iceberg.stream2.streaming_io_platform_type : sink
-spark.datahub.streaming.platform.iceberg.stream2.platform_instance : instance2
+spark.datahub.streaming.platform.iceberg.stream2.platformInstance : instance2
 ```
