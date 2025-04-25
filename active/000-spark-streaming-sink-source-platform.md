@@ -7,7 +7,7 @@
 
 ## Summary
 
-Allows configuration of Spark structured streaming sink and source platform.
+Allows configuration of the data platform for Spark Structured Streaming sources and sinks.
 
 ## Motivation
 
@@ -19,7 +19,7 @@ The motivation for this RFC stems from an issue encountered while capturing data
 
 ## Detailed design
 
-It is proposed to introduce two new Spark configurations: `spark.datahub.streaming_platform` for specifying the streaming platform, and streaming spec which is defined in the *Configuring Iceberg based dataset URNs* section below. Within the `generateUrnFromStreamingDescription` method in `SparkStreamingEventToDatahub.java`, these configurations will serve as fallbacks in cases where the regular expression matcher fails to extract the platform. If the configurations are set, their values will be used to determine the data platform. An example implementation is shown below:
+It is proposed to introduce two new Spark configurations: `spark.datahub.streaming_platform` for specifying the streaming platform, and alias‐based streaming configuration (see *Configuring Iceberg-based dataset URNs* below). Within the `generateUrnFromStreamingDescription` method in `SparkStreamingEventToDatahub.java`, these configurations will serve as fallbacks in cases where the regular expression matcher fails to extract the platform. If the configurations are set, their values will be used to determine the data platform. An example implementation is shown below:
 ```java
   public static Optional<DatasetUrn> generateUrnFromStreamingDescription(
         String description, SparkLineageConf sparkLineageConf) {
@@ -74,7 +74,7 @@ It is proposed to introduce two new Spark configurations: `spark.datahub.streami
     }
 }
 ```
-### Configuring Iceberg based dataset URNs
+### Configuring Iceberg-based dataset URNs
 
 This section follows the approach described in [Configuring Hdfs based dataset URNs](https://datahubproject.io/docs/metadata-integration/java/acryl-spark-lineage/#configuring-hdfs-based-dataset-urns)
 
@@ -109,7 +109,7 @@ The below example explains the configuration of the case, where data from 2 Iceb
 spark application and data from my_table_1 are supposed to have "instance1" as platform instance and "PROD" as env, and
 data from my_table_2 should have env "DEV" in their dataset URNs.
 
-```
+```properties
 spark.datahub.streaming.platform.iceberg.stream1.env : PROD
 spark.datahub.streaming.platform.iceberg.stream1.streaming_io_platform_type : source
 spark.datahub.streaming.platform.iceberg.stream1.platformInstance : instance1
