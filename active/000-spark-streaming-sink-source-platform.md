@@ -7,19 +7,26 @@
 
 ## Summary
 
-Allows configuration of the data platform for Spark Structured Streaming sources and sinks.
+Introduce configurable support for specifying the data platform of Spark Structured Streaming sources and sinks.
 
 ## Motivation
 
-The motivation for this RFC stems from an issue encountered while capturing data lineage using DataHub with Spark Structured Streaming. In the DataHub [code](https://github.com/datahub-project/datahub/blob/master/metadata-integration/java/acryl-spark-lineage/src/main/java/datahub/spark/converter/SparkStreamingEventToDatahub.java#L145), a regular expression matcher expects sources to be prefixed with identifiers like Kafka[…] to determine the data platform. However, since Iceberg tables lack such a prefix (e.g., iceberg[…]), DataHub fails to recognize the platform and thus shows no lineage.
+This RFC addresses an issue encountered when capturing data lineage in DataHub with Spark Structured Streaming. In the DataHub [codebase](https://github.com/datahub-project/datahub/blob/master/metadata-integration/java/acryl-spark-lineage/src/main/java/datahub/spark/converter/SparkStreamingEventToDatahub.java#L145), a regular expression matcher expects source descriptions to contain identifiable prefixes, such as Kafka[…], in order to extract the data platform. However, platforms like Iceberg do not use such prefixes (e.g., iceberg[…]), leading to DataHub's failure to detect the platform, resulting in missing lineage.
 
 ## Requirements
 
-- The proposal should be able to identify the data platform of a source or sink based on the configuration provided in the Spark job.
+- Support configuration of the data platform for a streaming source or sink within a Spark job.
+- Use these configurations as fallbacks when regex-based extraction fails.
 
 ## Detailed design
 
-It is proposed to introduce two new Spark configurations: `spark.datahub.streaming_platform` for specifying the streaming platform, and alias‐based streaming configuration (see *Configuring Iceberg-based dataset URNs* below). Within the `generateUrnFromStreamingDescription` method in `SparkStreamingEventToDatahub.java`, these configurations will serve as fallbacks in cases where the regular expression matcher fails to extract the platform. If the configurations are set, their values will be used to determine the data platform. An example implementation is shown below:
+Propose adding the following Spark configuration:
+
+- `spark.datahub.streaming.platform.instance` – explicitly specifies the data platform when automatic detection fails.
+
+This configuration will be checked in the `generateUrnFromStreamingDescription` method within `SparkStreamingEventToDatahub.java`. If the regex pattern fails to identify the platform, and this configuration is set, its value will be used to construct the dataset URN.
+
+Example implementation:
 ```java
   public static Optional<DatasetUrn> generateUrnFromStreamingDescription(
         String description, SparkLineageConf sparkLineageConf) {
@@ -28,8 +35,8 @@ It is proposed to introduce two new Spark configurations: `spark.datahub.streami
 }
 ```
 ```java
-  public static Optional<DatasetUrn> generateUrnFromStreamingDescription(String description,
-                                                                         SparkLineageConf sparkLineageConf, boolean isSink) {
+public static Optional<DatasetUrn> generateUrnFromStreamingDescription(String description,
+    SparkLineageConf sparkLineageConf, boolean isSink) {
     String pattern = "(.*?)\\[(.*)]";
     Pattern r = Pattern.compile(pattern);
     Matcher m = r.matcher(description);
@@ -54,11 +61,11 @@ It is proposed to introduce two new Spark configurations: `spark.datahub.streami
         return Optional.of(
                 new DatasetUrn(new DataPlatformUrn(platform), path, sparkLineageConf.getOpenLineageConf().getFabricType()));
     } else {
-        if (sparkLineageConf.getOpenLineageConf().getStreamingPlatform() != null) {
+        if (sparkLineageConf.getOpenLineageConf().getStreamingPlatformInstance() != null) {
             try {
                 CatalogTableDataset catalogTableDataset =
-                        CatalogTableDataset.create(sparkLineageConf.getOpenLineageConf().getStreamingPlatform(), description,
-                                sparkLineageConf.getOpenLineageConf(), isSink ? "sink" : "source");
+                        CatalogTableDataset.create(sparkLineageConf.getOpenLineageConf(), description,
+                                isSink ? "sink" : "source");
                 if (catalogTableDataset == null) {
                     return Optional.empty();
                 } else {
@@ -76,44 +83,44 @@ It is proposed to introduce two new Spark configurations: `spark.datahub.streami
 ```
 ### Configuring Iceberg-based dataset URNs
 
-This section follows the approach described in [Configuring Hdfs based dataset URNs](https://datahubproject.io/docs/metadata-integration/java/acryl-spark-lineage/#configuring-hdfs-based-dataset-urns)
+This section is modeled after [Configuring Hdfs based dataset URNs](https://datahubproject.io/docs/metadata-integration/java/acryl-spark-lineage/#configuring-hdfs-based-dataset-urns)
 
-Spark emits lineage between datasets. It has its own logic for generating urns. Python sources emit metadata of
-datasets. To link these 2 things, urns generated by both have to match.
-This section will help you to match urns to that of other ingestion sources.
-By default, URNs are created using
-template `urn:li:dataset:(urn:li:dataPlatform:<$platform>,<$platformInstance>.<$name>,<$env>)`. We can configure these 4
-things to generate the desired urn.
+Spark emits dataset lineage with its own logic for URN generation. Python ingestion sources emit metadata separately. For lineage to align correctly between these systems, the URNs generated by Spark and other ingestion tools must match.
+
+By default, dataset URNs follow this format:
+`urn:li:dataset:(urn:li:dataPlatform:<$platform>,<$platformInstance>.<$name>,<$env>)`
+Each of these fields can be configured to generate matching URNs across ingestion sources.
 
 **Platform**:
-The platform is explicitly supported through the new Spark configuration key:
+The platform can now be explicitly set using:
+- `spark.datahub.streaming.platform.instance`
 
-- `spark.datahub.streaming_platform`
-
-Platforms that do not set this configuration will default to `null`.
+If not set, the platform will default to `null`.
 
 **Name**:
-By default, the name is the complete path.
+Defaults to the full table path in the streaming description.
 
-**platform instance and env:**
+**Platform Instance and Env:**
+Defaults:
+- `env`: `PROD`
+- `platformInstance`: `null`
 
-The default value for env is 'PROD' and the platform instance is None. env and platform instances can be set for all
-datasets using configurations `spark.datahub.streaming.platform.<$platform>.<streaming_alias>.platformInstance` and `spark.datahub.streaming.platform.<$platform>.<streaming_alias>.env`.
-If spark is processing data that belongs to a different env or platform instance, then 'streaming_alias' can be used to
-specify `streaming_spec` specific values of these. 'streaming_alias' groups the env and platform instance
-together.
+These can be overridden for specific platforms and aliases using:
+```properties
+spark.datahub.streaming.platform.<platform>.<alias>.platformInstance
+spark.datahub.streaming.platform.<platform>.<alias>.env
+```
+The alias (`streaming_alias`) groups values for datasets processed in the same Spark job but with different metadata contexts.
 
-streaming_alias_list Example:
-
-The below example explains the configuration of the case, where data from 2 Iceberg tables are being processed in a single
-spark application and data from my_table_1 are supposed to have "instance1" as platform instance and "PROD" as env, and
-data from my_table_2 should have env "DEV" in their dataset URNs.
-
+**Example:**
 ```properties
 spark.datahub.streaming.platform.iceberg.stream1.env : PROD
-spark.datahub.streaming.platform.iceberg.stream1.streaming_io_platform_type : source
-spark.datahub.streaming.platform.iceberg.stream1.platformInstance : instance1
+spark.datahub.streaming.platform.iceberg.stream1.streaming.io.platform.type : source
+spark.datahub.streaming.platform.iceberg.stream1.platformInstance : stream1
+
 spark.datahub.streaming.platform.iceberg.stream2.env : DEV
-spark.datahub.streaming.platform.iceberg.stream2.streaming_io_platform_type : sink
-spark.datahub.streaming.platform.iceberg.stream2.platformInstance : instance2
+spark.datahub.streaming.platform.iceberg.stream2.streaming.io.platform.type : sink
+spark.datahub.streaming.platform.iceberg.stream2.platformInstance : catalog
+spark.datahub.streaming.platform.iceberg.stream2.usePlatformInstance : true
 ```
+In this example, `stream2.namespace.table` will be rewritten as `catalog.namespace.table` when `usePlatformInstance = true`, allowing lineage to reflect the correct platform instance. The default behavior is `false`, meaning the platform instance is not injected into the table name.
